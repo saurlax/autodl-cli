@@ -1,0 +1,48 @@
+name: Reusable test and build
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Version embedded in binaries
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Verify formatting
+        shell: bash
+        run: test -z "$(gofmt -l cmd internal scripts)"
+      - run: go vet ./...
+      - run: go test -race ./...
+      - run: go mod verify
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Package all supported platforms
+        env:
+          VERSION: ${{ inputs.version }}
+        run: go run ./scripts/package -version "$VERSION"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14

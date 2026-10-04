@@ -25,7 +25,37 @@ export AUTODL_TOKEN='your-developer-token'
 autodl account balance
 ```
 
-Token precedence: `--token` → `AUTODL_TOKEN` → config file. For local persistence, `autodl config set-token` reads one token from standard input until EOF. For example, redirect a protected file with `autodl config set-token < token.txt`; in PowerShell, `Get-Content token.txt | autodl config set-token`. It saves the token without printing or verifying it. The new file has mode `0600` on Unix; Windows uses the user's inherited ACLs. Protect the plaintext config and the input file. Config defaults to the OS user config directory (Linux: `$XDG_CONFIG_HOME/autodl/config.json`, or `~/.config/autodl/config.json`; macOS: `~/Library/Application Support/autodl/config.json`; Windows: `%AppData%\autodl\config.json`). Override the path with `--config`.
+For local persistence, run:
+
+```sh
+autodl config set-token
+```
+
+In a terminal this prompts for a token with input hidden; paste it and press Enter. With redirected stdin it reads until EOF. It saves the token without printing or verifying it.
+
+The default store is the **system keyring**: Windows Credential Manager, macOS Keychain, or Linux Secret Service (D-Bus, with an unlocked `login` collection). Credentials use service `autodl-cli` and account `developer-token`. No token is written to a config file. Keyring errors never silently fall back to plaintext; on headless servers use `AUTODL_TOKEN` or explicitly opt into a credential file with `--config PATH`.
+
+Token precedence: `--token` → `AUTODL_TOKEN` → system keyring. An explicit `--config PATH` selects a plaintext file instead of the keyring. `autodl config set-token --config PATH` writes that file; new files have mode `0600` on Unix and inherit the user's directory ACLs on Windows.
+
+Upgrading from v0.1.0: the old default plaintext file is no longer read automatically. Run `config set-token` again to save your token in the keyring, then remove the old file after verifying access. Alternatively, explicitly select the old file with `--config`: Linux `$XDG_CONFIG_HOME/autodl/config.json` or `~/.config/autodl/config.json`, macOS `~/Library/Application Support/autodl/config.json`, Windows `%AppData%\autodl\config.json`.
+
+### Run from source and accept the CLI
+
+In a local PowerShell terminal:
+
+```powershell
+Set-Location D:\Projects\autodl-cli
+go run ./cmd/autodl config set-token
+# Paste your developer token at the hidden prompt and press Enter.
+go run ./cmd/autodl account balance
+go run ./cmd/autodl instance list
+go run ./cmd/autodl image list
+go run ./cmd/autodl instance list --json
+# If the list includes a Pro instance:
+go run ./cmd/autodl instance status YOUR_INSTANCE_ID
+```
+
+These acceptance calls only read existing account state. Compare balance and instance status with the AutoDL console. `go run` reports application failures as `exit status N`; the Go launcher itself may exit with 1 even when the CLI's exit code is 2. To check the CLI exit code directly, run the compiled binary.
 
 ## Usage
 
@@ -82,7 +112,7 @@ Creation requires `--gpu-spec`, `--image`, and `--cuda-min`. GPU count defaults 
 | `image save INSTANCE_ID --name NAME` | Save a private image |
 | `image list` | Paginated private images and save status |
 | `storage mount --data-center CODE --type TYPE` | Switch exclusive NFS / ordinary storage |
-| `config set-token` | Save token read from stdin |
+| `config set-token` | Save token in system keyring (hidden terminal input) |
 | `completion bash\|zsh\|fish\|powershell` | Generate shell completion |
 
 Run any group without a subcommand to show its help. Missing arguments, missing required flags, invalid values, and unknown flags print the relevant command's complete help. Help and validation require no credentials.
@@ -110,7 +140,7 @@ go mod verify
 go run ./scripts/package -version dev
 ```
 
-Tests cover documented HTTP methods, paths, JSON payloads (including JSON bodies on GET), token precedence, required-input help, creation bounds, release confirmation, exact billing output, response errors, credential redaction, redirects, cancellation, and config replacement. They use local HTTP servers and temporary files. No real token or GPU is needed.
+Tests cover documented HTTP methods, paths, JSON payloads (including JSON bodies on GET), credential-source precedence, keyring save/error behavior without secret echo, required-input help, creation bounds, release confirmation, exact billing output, response errors, credential redaction, redirects, cancellation, and config replacement. They use local HTTP servers, fake credential stores, and temporary files. No real token, desktop keyring session, or GPU is needed.
 
 GitHub Actions:
 

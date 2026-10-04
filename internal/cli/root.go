@@ -17,6 +17,7 @@ import (
 	"github.com/saurlax/autodl-cli/internal/api"
 	"github.com/saurlax/autodl-cli/internal/config"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 type usageError struct{ error }
@@ -24,6 +25,7 @@ type usageError struct{ error }
 func invalid(format string, args ...any) error { return usageError{fmt.Errorf(format, args...)} }
 
 type options struct {
+	store                      config.SecretStore
 	token, baseURL, configPath string
 	timeout                    time.Duration
 	json, dryRun               bool
@@ -58,15 +60,19 @@ func Execute(ctx context.Context, args []string, in io.Reader, out, errOut io.Wr
 }
 
 func New(version string) *cobra.Command {
-	o := &options{}
+	return newRoot(version, config.SystemStore{})
+}
+
+func newRoot(version string, store config.SecretStore) *cobra.Command {
+	o := &options{store: store}
 	root := group("autodl", "Manage AutoDL GPU instances from your terminal.",
 		"An unofficial client for AutoDL's Common and Container Instance Pro APIs.\nUse a developer token from the AutoDL console. Pro APIs require identity verification.\nRun a command group without a subcommand to see its available operations.")
 	root.Version = version
 	root.SilenceErrors = true
 	root.SilenceUsage = true
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return usageError{err} })
-	root.PersistentFlags().StringVar(&o.token, "token", "", "Developer token (overrides AUTODL_TOKEN and config)")
-	root.PersistentFlags().StringVar(&o.configPath, "config", "", "Config file (default: OS user config directory/autodl/config.json)")
+	root.PersistentFlags().StringVar(&o.token, "token", "", "Developer token (overrides AUTODL_TOKEN and saved credentials)")
+	root.PersistentFlags().StringVar(&o.configPath, "config", "", "Use a plaintext credential file instead of the system keyring (explicit opt-in)")
 	root.PersistentFlags().StringVar(&o.baseURL, "base-url", "https://api.autodl.com", "API base URL; HTTPS required except loopback HTTP")
 	root.PersistentFlags().DurationVar(&o.timeout, "timeout", 30*time.Second, "Timeout for each HTTP request, e.g. 30s or 2m")
 	root.PersistentFlags().BoolVar(&o.json, "json", false, "Print the complete API response envelope as JSON")
@@ -226,6 +232,16 @@ func (o *options) resolveToken() (string, error) {
 	if t := strings.TrimSpace(os.Getenv("AUTODL_TOKEN")); t != "" {
 		return t, nil
 	}
+	if o.configPath == "" {
+		token, err := o.store.Get()
+		if err != nil {
+			return "", fmt.Errorf("system keyring unavailable; use AUTODL_TOKEN or explicitly select a file with --config")
+		}
+		if token = strings.TrimSpace(token); token != "" {
+			return token, nil
+		}
+		return "", fmt.Errorf("no developer token; run 'autodl config set-token', set AUTODL_TOKEN, or pass --token; old files require --config")
+	}
 	path, err := o.path()
 	if err != nil {
 		return "", err
@@ -241,18 +257,33 @@ func (o *options) resolveToken() (string, error) {
 }
 
 func (o *options) configCommand() *cobra.Command {
-	cmd := group("config", "Manage local credentials.", "Store a developer token in the OS user config directory or a path selected by --config.\nToken precedence: --token, AUTODL_TOKEN, then config file.")
-	set := &cobra.Command{Use: "set-token", Short: "Read and save a developer token from standard input.", Long: "Read a developer token from standard input until EOF and save it locally.\nOn Unix the new file uses mode 0600; on Windows protect it with account ACLs.\nThe token is stored as plaintext and is not validated against the API.", Example: "autodl config set-token < token.txt", Args: exactArgs(0), RunE: func(cmd *cobra.Command, _ []string) error {
+	cmd := group("config", "Manage local credentials.", "Store a developer token in the system keyring: Windows Credential Manager, macOS Keychain, or Linux Secret Service.\nToken precedence: --token, AUTODL_TOKEN, then system keyring (or an explicit --config file).\nKeyring failures never fall back to plaintext storage.")
+	set := &cobra.Command{Use: "set-token", Short: "Securely save a developer token in the system keyring.", Long: "Prompt for a token without echo when run in a terminal; otherwise read standard input until EOF.\nStore it in the system keyring as service autodl-cli, account developer-token.\nAn explicit --config path opts into plaintext file storage instead. The token is not validated against the API.", Example: "autodl config set-token", Args: exactArgs(0), RunE: func(cmd *cobra.Command, _ []string) error {
 		if o.dryRun {
 			return invalid("--dry-run is only supported for API commands")
 		}
-		b, err := io.ReadAll(io.LimitReader(cmd.InOrStdin(), 16385))
+		var b []byte
+		var err error
+		if f, ok := cmd.InOrStdin().(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+			fmt.Fprint(cmd.ErrOrStderr(), "Developer token (hidden): ")
+			b, err = term.ReadPassword(int(f.Fd()))
+			fmt.Fprintln(cmd.ErrOrStderr())
+		} else {
+			b, err = io.ReadAll(io.LimitReader(cmd.InOrStdin(), 16385))
+		}
 		if err != nil {
 			return err
 		}
 		t := strings.TrimSpace(string(b))
 		if t == "" || len(b) > 16384 || strings.ContainsAny(t, "\r\n") {
 			return invalid("provide one nonempty token (maximum 16 KiB) on standard input")
+		}
+		if o.configPath == "" {
+			if err = o.store.Set(t); err != nil {
+				return fmt.Errorf("cannot save token in system keyring; no plaintext file was written")
+			}
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), "Token saved in system keyring (service: autodl-cli, account: developer-token).")
+			return err
 		}
 		path, err := o.path()
 		if err != nil {

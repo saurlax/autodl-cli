@@ -24,4 +24,3 @@ Token precedence: `--token` → `AUTODL_TOKEN` → system keyring. An explicit `
 Upgrading from v0.1.0: the old default plaintext file is no longer read automatically. Run `config set-token` again to save your token in the keyring, then remove the old file after verifying access. Alternatively, explicitly select the old file with `--config`: Linux `$XDG_CONFIG_HOME/autodl/config.json` or `~/.config/autodl/config.json`, macOS `~/Library/Application Support/autodl/config.json`, Windows `%AppData%\autodl\config.json`.
 
 [Back to the README](../README.md).
-

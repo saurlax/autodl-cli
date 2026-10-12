@@ -47,4 +47,3 @@ go run ./cmd/autodl instance status YOUR_INSTANCE_ID
 These acceptance calls only read existing account state. Compare balance and instance status with the AutoDL console. `go run` reports application failures as `exit status N`; the Go launcher itself may exit with 1 even when the CLI's exit code is 2. To check the CLI exit code directly, run the compiled binary.
 
 [Back to the README](../README.md).
-
